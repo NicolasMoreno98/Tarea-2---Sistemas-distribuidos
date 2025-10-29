@@ -61,26 +61,32 @@ def get_statistics():
         """)
         min_score, max_score = cursor.fetchone()
         
-        # Distribución por rangos de score
+        # Distribución por rangos de score (actualizado para umbral 0.80)
         cursor.execute("""
             SELECT 
                 CASE 
-                    WHEN bert_score < 0.50 THEN '0.0-0.5'
-                    WHEN bert_score < 0.60 THEN '0.5-0.6'
-                    WHEN bert_score < 0.70 THEN '0.6-0.7'
-                    WHEN bert_score < 0.75 THEN '0.7-0.75'
-                    WHEN bert_score < 0.80 THEN '0.75-0.8'
-                    WHEN bert_score < 0.90 THEN '0.8-0.9'
-                    ELSE '0.9-1.0'
+                    WHEN bert_score < 0.50 THEN '< 0.50 (Muy bajo)'
+                    WHEN bert_score < 0.60 THEN '0.50-0.60 (Bajo)'
+                    WHEN bert_score < 0.70 THEN '0.60-0.70 (Regular)'
+                    WHEN bert_score < 0.75 THEN '0.70-0.75 (Marginal)'
+                    WHEN bert_score < 0.80 THEN '0.75-0.80 (Requiere regeneración)'
+                    WHEN bert_score < 0.85 THEN '0.80-0.85 (Aceptable)'
+                    WHEN bert_score < 0.90 THEN '0.85-0.90 (Bueno)'
+                    ELSE '0.90-1.00 (Excelente)'
                 END as score_range,
-                COUNT(*) as count
+                COUNT(*) as count,
+                ROUND(AVG(bert_score)::numeric, 4) as avg_score_in_range
             FROM responses
             WHERE bert_score IS NOT NULL
             GROUP BY score_range
-            ORDER BY score_range
+            ORDER BY MIN(bert_score)
         """)
         score_distribution = [
-            {'range': row[0], 'count': row[1]} 
+            {
+                'range': row[0], 
+                'count': row[1],
+                'avg_score': float(row[2]) if row[2] else 0
+            } 
             for row in cursor.fetchall()
         ]
         
@@ -112,6 +118,17 @@ def get_statistics():
         """)
         responses_24h = cursor.fetchone()[0]
         
+        # Estadísticas con nuevo umbral 0.80
+        cursor.execute("""
+            SELECT 
+                COUNT(*) FILTER (WHERE bert_score >= 0.80) as approved,
+                COUNT(*) FILTER (WHERE bert_score < 0.80) as rejected,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE bert_score >= 0.80) / COUNT(*), 2) as approval_rate
+            FROM responses
+            WHERE bert_score IS NOT NULL
+        """)
+        threshold_stats = cursor.fetchone()
+        
         cursor.close()
         conn.close()
         
@@ -123,7 +140,11 @@ def get_statistics():
             'score_distribution': score_distribution,
             'attempts_distribution': attempts_distribution,
             'avg_processing_time_ms': float(avg_processing_time) if avg_processing_time else 0,
-            'responses_24h': responses_24h
+            'responses_24h': responses_24h,
+            'threshold': 0.80,
+            'approved_count': threshold_stats[0],
+            'rejected_count': threshold_stats[1],
+            'approval_rate': float(threshold_stats[2]) if threshold_stats[2] else 0
         }), 200
         
     except Exception as e:

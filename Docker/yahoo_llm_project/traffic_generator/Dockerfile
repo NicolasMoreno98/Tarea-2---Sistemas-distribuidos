@@ -3,5 +3,4 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY generator.py .
-# CMD ["python", "generator.py"]
-CMD ["tail", "-f", "/dev/null"]
+CMD ["python", "generator.py"]

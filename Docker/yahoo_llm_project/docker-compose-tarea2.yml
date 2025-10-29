@@ -329,11 +329,11 @@ services:
     environment:
       - STORAGE_SERVICE_URL=http://storage-service:5001
       - NUM_REQUESTS=100
-      - REQUEST_INTERVAL_MS=1000
+      - REQUEST_INTERVAL_MS=100
+      - USE_CACHED_IDS=false  # Cambiar a 'true' para usar preguntas cacheadas
     networks:
       - yahoo_network
     restart: "no"
-    command: ["tail", "-f", "/dev/null"]  # No auto-ejecutar
 
   # ==================== MONITOREO Y OBSERVABILIDAD ====================
   

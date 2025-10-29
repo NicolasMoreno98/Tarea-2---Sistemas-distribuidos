@@ -3,18 +3,48 @@ import requests
 import json
 import random
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-API_URL = "http://llm-service:5000/process"
+API_URL = "http://storage-service:5001/query"
 CSV_FILE = "/data/train.csv"
 OUTPUT_FILE = "/data/response.json"
-NUM_TOTAL_QUESTIONS = 20000
-NUM_REQUESTS = 10
+CACHED_IDS_FILE = "/data/cached_question_ids.txt"
+NUM_REQUESTS = 100  # Número de requests a generar
+USE_CACHED_IDS = os.getenv('USE_CACHED_IDS', 'false').lower() == 'true'
+
+def load_cached_ids():
+    """Cargar los IDs de preguntas que ya están en cache/DB"""
+    try:
+        with open(CACHED_IDS_FILE, 'r') as f:
+            ids = [int(line.strip()) for line in f if line.strip()]
+        print(f"✓ Cargados {len(ids)} IDs de preguntas cacheadas")
+        return ids
+    except Exception as e:
+        print(f"✗ Error cargando cached IDs: {e}")
+        return []
 
 def load_questions():
     try:
         print("Cargando dataset...")
-        df = pd.read_csv(CSV_FILE, nrows=NUM_TOTAL_QUESTIONS)
+        
+        if USE_CACHED_IDS:
+            # Cargar solo las preguntas que ya están en cache
+            cached_ids = load_cached_ids()
+            if not cached_ids:
+                print("⚠ No se encontraron IDs cacheados, cargando primeras 20k preguntas")
+                df = pd.read_csv(CSV_FILE, nrows=20000)
+            else:
+                # Cargar todo el CSV y filtrar por los IDs cacheados
+                print(f"📥 Cargando train.csv completo para obtener preguntas cacheadas...")
+                df = pd.read_csv(CSV_FILE)
+                # Filtrar solo las filas con índices en cached_ids (ajustando por 0-index)
+                cached_indices = [idx - 1 for idx in cached_ids if idx > 0]
+                df = df.iloc[cached_indices]
+                print(f"✓ Filtradas {len(df)} preguntas de la cache")
+        else:
+            # Comportamiento original: primeras 20k preguntas
+            df = pd.read_csv(CSV_FILE, nrows=20000)
         
         questions = []
         for idx, row in df.iterrows():
@@ -25,7 +55,6 @@ def load_questions():
             })
         
         print(f"Cargadas {len(questions)} preguntas")
-        print(f"IDs van desde 1 hasta {len(questions)}")
         return questions
         
     except Exception as e:
@@ -33,22 +62,76 @@ def load_questions():
         return []
 
 def send_request(question_data, max_retries=2):
+    """
+    Envía request al storage-service y maneja respuestas asíncronas
+    """
+    # Preparar payload en el formato que espera storage-service
+    payload = {
+        'question_text': question_data['question'],
+        'original_answer': question_data['best_answer']
+    }
+    
     for attempt in range(max_retries):
         try:
             print(f"    Intento {attempt + 1}/{max_retries}")
-            response = requests.post(API_URL, json=question_data, timeout=60)
+            response = requests.post(API_URL, json=payload, timeout=10)
             
             if response.status_code == 200:
+                # Respuesta encontrada (cache o database)
                 result = response.json()
+                response_data = result.get('result', {})
+                
                 return {
                     'question_id': question_data['id'],
                     'question': question_data['question'],
                     'human_answer': question_data['best_answer'],
-                    'llm_answer': result.get('answer', ''),
+                    'llm_answer': response_data.get('llm_response', ''),
                     'source': result.get('source', 'unknown'),
-                    'score': result.get('score', 0.0),
-                    'timestamp': time.time()
+                    'score': response_data.get('bert_score', 0.0),
+                    'timestamp': time.time(),
+                    'processing_attempts': response_data.get('processing_attempts', 1)
                 }
+                
+            elif response.status_code == 202:
+                # Respuesta pendiente - necesita procesamiento asíncrono
+                result = response.json()
+                question_id = result.get('question_id')
+                print(f"    Pregunta en procesamiento asíncrono (ID: {question_id})")
+                
+                # Polling para esperar resultado (máximo 60 segundos)
+                max_polls = 60
+                poll_interval = 1
+                
+                for poll_attempt in range(max_polls):
+                    time.sleep(poll_interval)
+                    status_url = f"http://storage-service:5001/status/{question_id}"
+                    
+                    try:
+                        status_response = requests.get(status_url, timeout=5)
+                        
+                        if status_response.status_code == 200:
+                            status_result = status_response.json()
+                            response_data = status_result.get('result', {})
+                            
+                            print(f"    ✓ Procesamiento completado después de {poll_attempt + 1}s")
+                            return {
+                                'question_id': question_data['id'],
+                                'question': question_data['question'],
+                                'human_answer': question_data['best_answer'],
+                                'llm_answer': response_data.get('llm_response', ''),
+                                'source': 'async_processed',
+                                'score': response_data.get('bert_score', 0.0),
+                                'timestamp': time.time(),
+                                'processing_attempts': response_data.get('processing_attempts', 1),
+                                'wait_time': poll_attempt + 1
+                            }
+                    except Exception as poll_error:
+                        print(f"    Error en polling: {poll_error}")
+                        continue
+                
+                print(f"    Timeout esperando procesamiento asíncrono")
+                return None
+                
             elif response.status_code == 429:
                 print(f"    Rate limit alcanzado, esperando...")
                 wait_time = 60
@@ -59,7 +142,7 @@ def send_request(question_data, max_retries=2):
                 print(f"    Error {response.status_code}: {response.text[:200]}")
                 
         except requests.exceptions.Timeout:
-            print(f"    Timeout después de 60 segundos")
+            print(f"    Timeout después de 10 segundos")
         except Exception as e:
             print(f"    Excepción: {e}")
         
@@ -115,27 +198,37 @@ def main():
         if result:
             response_time = end_time - start_time
             results.append(result)
-            if result['source'] == 'cache':
+            
+            source = result['source']
+            score = result['score']
+            wait_time = result.get('wait_time', 0)
+            
+            if source == 'cache':
                 cache_hits += 1
                 if i % 10 != 1:
-                    print(f"CACHE ({response_time:.1f}s, score: {result['score']:.3f})")
+                    print(f"CACHE ({response_time:.1f}s, score: {score:.3f})")
                 else:
-                    print(f"  Cache hit obtenido ({response_time:.1f}s) - Score: {result['score']:.3f}")
-            elif result['source'] == 'llm':
+                    print(f"  Cache hit ({response_time:.1f}s) - Score: {score:.3f}")
+                    
+            elif source == 'database':
+                cache_hits += 1  # Database también cuenta como hit
+                if i % 10 != 1:
+                    print(f"DB ({response_time:.1f}s, score: {score:.3f})")
+                else:
+                    print(f"  Database hit ({response_time:.1f}s) - Score: {score:.3f}")
+                    
+            elif source == 'async_processed':
                 llm_calls += 1
                 if i % 10 != 1:
-                    print(f"LLM ({response_time:.1f}s, score: {result['score']:.3f})")
+                    print(f"ASYNC ({response_time:.1f}s, wait: {wait_time}s, score: {score:.3f})")
                 else:
-                    print(f"  Ollama respondió ({response_time:.1f}s) - Score: {result['score']:.3f}")
-                    # Verificar qué clave contiene la respuesta
-                    answer_text = result.get('answer') or result.get('response') or result.get('llm_response', 'N/A')
+                    print(f"  Procesamiento asíncrono ({response_time:.1f}s, esperó: {wait_time}s)")
+                    print(f"  Score: {score:.3f}, Intentos: {result.get('processing_attempts', 1)}")
+                    answer_text = result.get('llm_answer', 'N/A')
                     if isinstance(answer_text, str) and len(answer_text) > 100:
                         print(f"  Respuesta: {answer_text[:100]}...")
                     else:
                         print(f"  Respuesta: {answer_text}")
-                # Delay después de LLM calls
-                additional_delay = 0.2
-                time.sleep(additional_delay)
             
             # Mostrar progreso cada 10 requests (más frecuente)
             if i % 10 == 0:

@@ -175,15 +175,39 @@
             </div>
             
             <div class="stat-card">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-label">Umbral de Validación</div>
+                <div class="stat-value" id="threshold" style="color: #667eea;">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">✅</div>
+                <div class="stat-label">Tasa de Aprobación</div>
+                <div class="stat-value" id="approvalRate" style="color: #10b981;">--</div>
+            </div>
+            
+            <div class="stat-card">
                 <div class="stat-icon">📈</div>
-                <div class="stat-label">Score Máximo</div>
-                <div class="stat-value" id="maxScore">--</div>
+                <div class="stat-label">Respuestas Aprobadas</div>
+                <div class="stat-value" id="approvedCount" style="color: #10b981;">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">❌</div>
+                <div class="stat-label">Respuestas Rechazadas</div>
+                <div class="stat-value" id="rejectedCount" style="color: #ef4444;">--</div>
             </div>
             
             <div class="stat-card">
                 <div class="stat-icon">⏱️</div>
                 <div class="stat-label">Tiempo Promedio (ms)</div>
                 <div class="stat-value" id="avgTime">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">🔝</div>
+                <div class="stat-label">Score Máximo</div>
+                <div class="stat-value" id="maxScore">--</div>
             </div>
         </div>
         
@@ -230,6 +254,10 @@
                 // Actualizar cards de estadísticas
                 document.getElementById('totalResponses').textContent = data.total_responses;
                 document.getElementById('avgScore').textContent = data.avg_score.toFixed(3);
+                document.getElementById('threshold').textContent = data.threshold.toFixed(2);
+                document.getElementById('approvalRate').textContent = data.approval_rate.toFixed(1) + '%';
+                document.getElementById('approvedCount').textContent = data.approved_count;
+                document.getElementById('rejectedCount').textContent = data.rejected_count;
                 document.getElementById('maxScore').textContent = data.max_score.toFixed(3);
                 document.getElementById('avgTime').textContent = Math.round(data.avg_processing_time_ms);
                 
@@ -242,11 +270,33 @@
                     data: {
                         labels: data.score_distribution.map(d => d.range),
                         datasets: [{
-                            label: 'Cantidad de Respuestas',
-                            data: data.score_distribution.map(d => d.count),
-                            backgroundColor: 'rgba(102, 126, 234, 0.7)',
-                            borderColor: 'rgba(102, 126, 234, 1)',
+                            label: 'Score Promedio',
+                            data: data.score_distribution.map(d => d.avg_score),
+                            backgroundColor: data.score_distribution.map(d => {
+                                if (d.range.includes('0.75-0.80')) return 'rgba(255, 159, 64, 0.7)'; // Naranja - Requiere regeneración
+                                if (d.range.includes('0.80-0.85')) return 'rgba(75, 192, 192, 0.7)'; // Verde claro - Aceptable
+                                if (d.range.includes('0.85-0.90')) return 'rgba(54, 162, 235, 0.7)'; // Azul - Bueno
+                                if (d.range.includes('0.90-1.00')) return 'rgba(153, 102, 255, 0.7)'; // Púrpura - Excelente
+                                return 'rgba(255, 99, 132, 0.7)'; // Rojo - Muy bajo
+                            }),
+                            borderColor: data.score_distribution.map(d => {
+                                if (d.range.includes('0.75-0.80')) return 'rgba(255, 159, 64, 1)';
+                                if (d.range.includes('0.80-0.85')) return 'rgba(75, 192, 192, 1)';
+                                if (d.range.includes('0.85-0.90')) return 'rgba(54, 162, 235, 1)';
+                                if (d.range.includes('0.90-1.00')) return 'rgba(153, 102, 255, 1)';
+                                return 'rgba(255, 99, 132, 1)';
+                            }),
                             borderWidth: 2
+                        },
+                        {
+                            label: 'Cantidad',
+                            data: data.score_distribution.map(d => d.count),
+                            type: 'line',
+                            borderColor: 'rgba(102, 126, 234, 1)',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            borderWidth: 2,
+                            fill: false,
+                            yAxisID: 'y1'
                         }]
                     },
                     options: {
@@ -254,19 +304,38 @@
                         maintainAspectRatio: true,
                         plugins: {
                             legend: {
-                                display: false
+                                display: true,
+                                position: 'top'
                             },
                             title: {
                                 display: true,
-                                text: 'Umbral Flink: 0.75 (línea verde)',
-                                font: { size: 12 }
+                                text: 'Umbral de Validación: 0.80 | Naranja: Requiere Regeneración | Verde+: Aprobadas',
+                                font: { size: 13, weight: 'bold' },
+                                color: '#667eea'
                             }
                         },
                         scales: {
                             y: {
                                 beginAtZero: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Score Promedio'
+                                },
+                                max: 1.0
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Cantidad de Respuestas'
+                                },
                                 ticks: {
                                     precision: 0
+                                },
+                                grid: {
+                                    drawOnChartArea: false
                                 }
                             }
                         }
@@ -324,7 +393,7 @@
                             label: 'Frecuencia',
                             data: data.map(d => d.count),
                             backgroundColor: data.map(d => 
-                                d.bin_start >= 0.75 ? 'rgba(75, 192, 192, 0.7)' : 'rgba(255, 99, 132, 0.7)'
+                                d.bin_start >= 0.80 ? 'rgba(75, 192, 192, 0.7)' : 'rgba(255, 99, 132, 0.7)'
                             ),
                             borderWidth: 1
                         }]

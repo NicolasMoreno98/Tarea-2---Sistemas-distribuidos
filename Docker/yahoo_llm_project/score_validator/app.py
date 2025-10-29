@@ -19,7 +19,7 @@ app = Flask(__name__)
 
 KAFKA_BROKER = os.environ.get('KAFKA_BROKER', 'kafka:9092')
 CONSUMER_GROUP = 'score-validator-group'
-SCORE_THRESHOLD = 0.75
+SCORE_THRESHOLD = 0.80
 MAX_REGENERATION_ATTEMPTS = 3
 
 def init_kafka():
