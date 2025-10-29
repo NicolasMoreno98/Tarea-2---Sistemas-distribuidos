@@ -1,0 +1,3 @@
+com/yahoo/flink/ScoreValidatorJob.class
+com/yahoo/flink/ScoreValidatorJob$ScoreCalculator.class
+com/yahoo/flink/ScoreValidatorJob$ScoredResponse.class

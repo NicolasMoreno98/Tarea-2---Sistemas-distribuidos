@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Flink Score Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        }
+        
+        .stat-label {
+            color: #888;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        
+        .stat-value {
+            color: #333;
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+        
+        .stat-icon {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .chart-title {
+            font-size: 1.3em;
+            color: #333;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.2em;
+        }
+        
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 15px;
+        }
+        
+        .refresh-btn:hover {
+            background: #764ba2;
+            transform: scale(1.05);
+        }
+        
+        .last-update {
+            color: #888;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+        
+        canvas {
+            max-height: 400px !important;
+        }
+        
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Flink Score Analytics Dashboard</h1>
+            <p class="subtitle">Análisis en tiempo real de BERTScores calculados por Apache Flink</p>
+            <button class="refresh-btn" onclick="loadAllData()">🔄 Actualizar Datos</button>
+            <p class="last-update" id="lastUpdate"></p>
+        </header>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📝</div>
+                <div class="stat-label">Total Respuestas</div>
+                <div class="stat-value" id="totalResponses">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">⭐</div>
+                <div class="stat-label">Score Promedio</div>
+                <div class="stat-value" id="avgScore">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">📈</div>
+                <div class="stat-label">Score Máximo</div>
+                <div class="stat-value" id="maxScore">--</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">⏱️</div>
+                <div class="stat-label">Tiempo Promedio (ms)</div>
+                <div class="stat-value" id="avgTime">--</div>
+            </div>
+        </div>
+        
+        <div class="charts-grid">
+            <div class="chart-container">
+                <h2 class="chart-title">Distribución de Scores</h2>
+                <canvas id="scoreDistChart"></canvas>
+            </div>
+            
+            <div class="chart-container">
+                <h2 class="chart-title">Intentos de Procesamiento</h2>
+                <canvas id="attemptsChart"></canvas>
+            </div>
+            
+            <div class="chart-container full-width">
+                <h2 class="chart-title">Histograma de Scores (Detallado)</h2>
+                <canvas id="histogramChart"></canvas>
+            </div>
+            
+            <div class="chart-container full-width">
+                <h2 class="chart-title">Mejora de Calidad por Reintentos</h2>
+                <canvas id="improvementChart"></canvas>
+            </div>
+            
+            <div class="chart-container full-width">
+                <h2 class="chart-title">Score Promedio por Hora (Últimas 24h)</h2>
+                <canvas id="timeseriesChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let charts = {};
+        
+        // Configuración global de Chart.js
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+        Chart.defaults.color = '#666';
+        
+        async function loadStatistics() {
+            try {
+                const response = await fetch('/api/statistics');
+                const data = await response.json();
+                
+                // Actualizar cards de estadísticas
+                document.getElementById('totalResponses').textContent = data.total_responses;
+                document.getElementById('avgScore').textContent = data.avg_score.toFixed(3);
+                document.getElementById('maxScore').textContent = data.max_score.toFixed(3);
+                document.getElementById('avgTime').textContent = Math.round(data.avg_processing_time_ms);
+                
+                // Gráfico de distribución de scores
+                const scoreDistCtx = document.getElementById('scoreDistChart').getContext('2d');
+                if (charts.scoreDist) charts.scoreDist.destroy();
+                
+                charts.scoreDist = new Chart(scoreDistCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: data.score_distribution.map(d => d.range),
+                        datasets: [{
+                            label: 'Cantidad de Respuestas',
+                            data: data.score_distribution.map(d => d.count),
+                            backgroundColor: 'rgba(102, 126, 234, 0.7)',
+                            borderColor: 'rgba(102, 126, 234, 1)',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Umbral Flink: 0.75 (línea verde)',
+                                font: { size: 12 }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    precision: 0
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // Gráfico de intentos
+                const attemptsCtx = document.getElementById('attemptsChart').getContext('2d');
+                if (charts.attempts) charts.attempts.destroy();
+                
+                charts.attempts = new Chart(attemptsCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.attempts_distribution.map(d => `${d.attempts} intento(s)`),
+                        datasets: [{
+                            data: data.attempts_distribution.map(d => d.count),
+                            backgroundColor: [
+                                'rgba(75, 192, 192, 0.7)',
+                                'rgba(255, 206, 86, 0.7)',
+                                'rgba(255, 99, 132, 0.7)',
+                                'rgba(153, 102, 255, 0.7)'
+                            ],
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error cargando estadísticas:', error);
+            }
+        }
+        
+        async function loadHistogram() {
+            try {
+                const response = await fetch('/api/scores/histogram');
+                const data = await response.json();
+                
+                const ctx = document.getElementById('histogramChart').getContext('2d');
+                if (charts.histogram) charts.histogram.destroy();
+                
+                charts.histogram = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: data.map(d => d.bin_start.toFixed(2)),
+                        datasets: [{
+                            label: 'Frecuencia',
+                            data: data.map(d => d.count),
+                            backgroundColor: data.map(d => 
+                                d.bin_start >= 0.75 ? 'rgba(75, 192, 192, 0.7)' : 'rgba(255, 99, 132, 0.7)'
+                            ),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'BERTScore Range'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    precision: 0
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Cantidad'
+                                }
+                            }
+                        }
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error cargando histograma:', error);
+            }
+        }
+        
+        async function loadImprovement() {
+            try {
+                const response = await fetch('/api/quality/improvement');
+                const data = await response.json();
+                
+                const ctx = document.getElementById('improvementChart').getContext('2d');
+                if (charts.improvement) charts.improvement.destroy();
+                
+                charts.improvement = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.map(d => `Intento ${d.attempts}`),
+                        datasets: [{
+                            label: 'Score Promedio',
+                            data: data.map(d => d.avg_score),
+                            borderColor: 'rgba(118, 75, 162, 1)',
+                            backgroundColor: 'rgba(118, 75, 162, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                min: 0.6,
+                                max: 1.0,
+                                title: {
+                                    display: true,
+                                    text: 'Score Promedio'
+                                }
+                            }
+                        }
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error cargando mejora:', error);
+            }
+        }
+        
+        async function loadTimeseries() {
+            try {
+                const response = await fetch('/api/scores/timeseries');
+                const data = await response.json();
+                
+                const ctx = document.getElementById('timeseriesChart').getContext('2d');
+                if (charts.timeseries) charts.timeseries.destroy();
+                
+                charts.timeseries = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.map(d => new Date(d.timestamp).toLocaleTimeString('es-ES', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })),
+                        datasets: [{
+                            label: 'Score Promedio',
+                            data: data.map(d => d.avg_score),
+                            borderColor: 'rgba(102, 126, 234, 1)',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                min: 0.5,
+                                max: 1.0,
+                                title: {
+                                    display: true,
+                                    text: 'BERTScore'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Hora'
+                                }
+                            }
+                        }
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error cargando serie temporal:', error);
+            }
+        }
+        
+        async function loadAllData() {
+            document.getElementById('lastUpdate').textContent = 'Cargando...';
+            
+            await Promise.all([
+                loadStatistics(),
+                loadHistogram(),
+                loadImprovement(),
+                loadTimeseries()
+            ]);
+            
+            const now = new Date().toLocaleString('es-ES');
+            document.getElementById('lastUpdate').textContent = `Última actualización: ${now}`;
+        }
+        
+        // Cargar datos al inicio
+        loadAllData();
+        
+        // Auto-refresh cada 30 segundos
+        setInterval(loadAllData, 30000);
+    </script>
+</body>
+</html>

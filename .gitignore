@@ -19,6 +19,7 @@ build/
 
 # Docker
 *.log
+docker-compose.override.yml
 
 # Sistema
 .DS_Store
@@ -29,9 +30,7 @@ Thumbs.db
 *.swp
 *~
 
-# Datos
-*.csv
-*.json
+# Datos grandes
 response.json
 demo_results.json
 
@@ -41,3 +40,10 @@ Respaldo/
 # Archivos de sistema
 key.env
 LLM.py
+
+# Archivos de documentacion duplicados
+ACLARACION_TIEMPOS.md
+INSTRUCCIONES_EJECUCION.md
+RESUMEN_*.txt
+RESUMEN_*.md
+COMANDOS_DEMO.txt

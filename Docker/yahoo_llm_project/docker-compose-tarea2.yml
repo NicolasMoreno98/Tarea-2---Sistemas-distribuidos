@@ -167,54 +167,13 @@ services:
     networks:
       - yahoo_network
 
-  # ==================== APACHE FLINK (Tarea 2) ====================
-  
-  # Flink JobManager - Coordinador de trabajos
-  flink-jobmanager:
-    image: flink:1.18-scala_2.12
-    container_name: flink_jobmanager
-    ports:
-      - "8081:8081"
-    command: jobmanager
-    environment:
-      - |
-        FLINK_PROPERTIES=
-        jobmanager.rpc.address: flink-jobmanager
-        jobmanager.memory.process.size: 1600m
-        taskmanager.numberOfTaskSlots: 2
-        parallelism.default: 2
-    volumes:
-      - flink_jobmanager_data:/opt/flink/data
-      - ./flink_jobs:/opt/flink/usrlib
-    networks:
-      - yahoo_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Flink TaskManager - Ejecutor de trabajos
-  flink-taskmanager:
-    image: flink:1.18-scala_2.12
-    container_name: flink_taskmanager
-    depends_on:
-      flink-jobmanager:
-        condition: service_healthy
-    command: taskmanager
-    environment:
-      - |
-        FLINK_PROPERTIES=
-        jobmanager.rpc.address: flink-jobmanager
-        taskmanager.memory.process.size: 1600m
-        taskmanager.numberOfTaskSlots: 2
-    volumes:
-      - flink_taskmanager_data:/opt/flink/data
-    networks:
-      - yahoo_network
-    scale: 1  # Puede escalarse a múltiples TaskManagers
-
   # ==================== SERVICIOS DE APLICACIÓN (Tarea 2) ====================
+  # NOTA: Apache Flink fue reemplazado por score-validator (Python) para simplificar
+  # la implementación. score-validator cumple exactamente la misma funcionalidad:
+  # - Lee desde el tópico de respuestas exitosas
+  # - Calcula BERTScore
+  # - Decide regeneración o persistencia según umbral de calidad (0.75)
+  # - Previene ciclos infinitos limitando reintentos
   
   # Servicio de Almacenamiento (adaptado para Kafka)
   storage-service:
@@ -240,7 +199,7 @@ services:
   # Consumidor LLM Asíncrono (nuevo para Tarea 2)
   llm-consumer:
     build:
-      context: ../../llm_consumer
+      context: ./llm_consumer
       dockerfile: Dockerfile
     depends_on:
       kafka:
@@ -261,7 +220,7 @@ services:
   # Consumidor de Reintentos - Overload (nuevo para Tarea 2)
   retry-overload-consumer:
     build:
-      context: ../../retry_consumers
+      context: ./retry_consumers
       dockerfile: Dockerfile.overload
     container_name: retry_overload_consumer
     depends_on:
@@ -276,7 +235,7 @@ services:
   # Consumidor de Reintentos - Quota (nuevo para Tarea 2)
   retry-quota-consumer:
     build:
-      context: ../../retry_consumers
+      context: ./retry_consumers
       dockerfile: Dockerfile.quota
     container_name: retry_quota_consumer
     depends_on:
@@ -289,11 +248,16 @@ services:
     restart: unless-stopped
 
   # Score Validator - Validacion de calidad (nuevo para Tarea 2)
+  # NOTA: Servicio Python para validación de calidad de respuestas
+  # Trabaja en conjunto con Flink para el procesamiento de flujos
+  # Expone HTTP API en puerto 8000 para consultas de Flink
   score-validator:
     build:
-      context: ../../score_validator
+      context: ./score_validator
       dockerfile: Dockerfile
     container_name: score_validator
+    ports:
+      - "8000:8000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -302,6 +266,57 @@ services:
     networks:
       - yahoo_network
     restart: unless-stopped
+
+  # ==================== APACHE FLINK (Tarea 2) ====================
+  
+  # Flink Job Manager - Coordinador del cluster Flink
+  flink-jobmanager:
+    image: flink:1.18-scala_2.12
+    container_name: flink_jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      - KAFKA_BROKER=kafka:9092
+    volumes:
+      - ./flink-job:/opt/flink-job
+      - flink_jobmanager_data:/opt/flink/data
+    networks:
+      - yahoo_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1600m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Flink Task Manager - Ejecutor de trabajos
+  flink-taskmanager:
+    image: flink:1.18-scala_2.12
+    container_name: flink_taskmanager
+    command: taskmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      - KAFKA_BROKER=kafka:9092
+    volumes:
+      - ./flink-job:/opt/flink-job
+      - flink_taskmanager_data:/opt/flink/data
+    networks:
+      - yahoo_network
+    depends_on:
+      - flink-jobmanager
+    deploy:
+      resources:
+        limits:
+          memory: 1600m
+      replicas: 1
 
   # Generador de Tráfico (adaptado para Tarea 2)
   traffic-generator:
@@ -337,6 +352,25 @@ services:
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     networks:
       - yahoo_network
+  
+  # Servicio de Visualización - Dashboard con gráficos de scores
+  viz-service:
+    build: ./viz_service
+    container_name: viz_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5002:5002"
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/yahoo_db
+    networks:
+      - yahoo_network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:5002/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data:

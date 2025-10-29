@@ -1,0 +1,6 @@
+kafka-python==2.0.2
+bert-score==0.3.13
+torch==2.1.0
+transformers==4.35.0
+flask==2.3.3
+werkzeug==2.3.7
