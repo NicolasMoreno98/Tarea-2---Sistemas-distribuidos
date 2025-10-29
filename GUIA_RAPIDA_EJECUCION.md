@@ -27,8 +27,8 @@ Antes de iniciar, asegurate de tener instalado:
 ## PASO 1: CLONAR REPOSITORIO
 
 ```bash
-git clone https://github.com/NicolasMoreno98/Tarea-1---Sistemas-distribuidos.git
-cd "Tarea-1---Sistemas-distribuidos"
+git clone https://github.com/NicolasMoreno98/Tarea-2---Sistemas-distribuidos.git
+cd "Tarea-2---Sistemas-distribuidos"
 ```
 
 ---
