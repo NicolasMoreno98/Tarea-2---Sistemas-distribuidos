@@ -1,0 +1,353 @@
+# 🚀 COMANDOS RÁPIDOS PARA DEMO
+
+## ✅ Pre-Demo Checklist
+
+```powershell
+# 1. Verificar servicios (deben ser 11)
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# 2. Verificar LAG=0
+docker exec kafka_broker kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group llm-consumer-group
+
+# 3. Abrir Kafka UI
+start http://localhost:8080
+
+# 4. Test rápido
+curl http://localhost:5001/metrics
+```
+
+---
+
+## 🎬 DEMO - CASO 1: Flujo Normal
+
+```powershell
+# Enviar pregunta
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es Kubernetes y cómo se relaciona con Docker?\", \"original_answer\": \"Orquestación de contenedores en entornos cloud\"}'
+
+# Copiar el question_id de la respuesta, luego:
+curl http://localhost:5001/status/<QUESTION_ID>
+
+# Ver logs en tiempo real
+docker logs -f llm_consumer_1
+docker logs -f score_validator
+```
+
+---
+
+## 🎬 DEMO - CASO 2: Errores y Retry
+
+```powershell
+# Terminal 1
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es la virtualización?\", \"original_answer\": \"Tecnología de abstracción\"}'
+
+# Terminal 2
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es un hypervisor?\", \"original_answer\": \"Software de virtualización\"}'
+
+# Terminal 3
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es VMware?\", \"original_answer\": \"Plataforma empresarial\"}'
+
+# Terminal 4
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es VirtualBox?\", \"original_answer\": \"Solución gratuita\"}'
+
+# Terminal 5
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es Hyper-V?\", \"original_answer\": \"Hypervisor de Microsoft\"}'
+
+# Ver logs de retry
+docker logs -f retry_overload_consumer
+
+# Ver en PostgreSQL
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT question_text, processing_attempts, bert_score FROM responses WHERE question_text LIKE '%virtual%' ORDER BY processing_attempts DESC;"
+```
+
+---
+
+## 🎬 DEMO - CASO 3: Regeneración
+
+```powershell
+# Enviar pregunta que podría tener score bajo
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Cuál es la capital de Francia?\", \"original_answer\": \"La capital de Francia es París, una ciudad con más de 2 millones de habitantes ubicada en el norte del país, famosa por la Torre Eiffel, el Louvre y la catedral de Notre-Dame.\"}'
+
+# Ver logs de Score Validator
+docker logs -f score_validator
+
+# Consultar resultado
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT question_text, bert_score, processing_attempts FROM responses WHERE question_text LIKE '%capital de Francia%';"
+```
+
+---
+
+## 🎬 DEMO - CASO 4: Cache Hit
+
+```powershell
+# Primera llamada (puede estar en cache)
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es Docker y para qué se utiliza?\", \"original_answer\": \"Tecnología de contenedores\"}'
+
+# Esperar 3 segundos si fue 202
+
+# Segunda llamada (DEBE estar en cache)
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"¿Qué es Docker y para qué se utiliza?\", \"original_answer\": \"Tecnología de contenedores\"}'
+
+# Resultado esperado: 200 OK con "source": "cache"
+
+# Ver estadísticas de cache
+curl http://localhost:5001/metrics | jq '.cache_info | {keyspace_hits, keyspace_misses}'
+```
+
+---
+
+## 🎬 DEMO - CASO 5: Métricas
+
+```powershell
+# Ver métricas completas
+curl http://localhost:5001/metrics | jq
+
+# Ver solo estadísticas principales
+curl http://localhost:5001/metrics | jq '{total_responses, average_score, attempts_distribution}'
+
+# PostgreSQL: Distribución de scores
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT CASE WHEN bert_score >= 0.90 THEN 'Excelente (0.90+)' WHEN bert_score >= 0.80 THEN 'Bueno (0.80-0.89)' WHEN bert_score >= 0.75 THEN 'Aceptable (0.75-0.79)' ELSE 'Bajo (<0.75)' END as calidad, COUNT(*) as cantidad, ROUND(AVG(bert_score), 3) as score_promedio FROM responses GROUP BY CASE WHEN bert_score >= 0.90 THEN 'Excelente (0.90+)' WHEN bert_score >= 0.80 THEN 'Bueno (0.80-0.89)' WHEN bert_score >= 0.75 THEN 'Aceptable (0.75-0.79)' ELSE 'Bajo (<0.75)' END ORDER BY score_promedio DESC;"
+
+# PostgreSQL: Top 5 mejores scores
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT question_text, bert_score, processing_attempts FROM responses ORDER BY bert_score DESC LIMIT 5;"
+```
+
+---
+
+## 🎬 DEMO AUTOMATIZADA (Opción Rápida)
+
+```powershell
+# Ejecutar todos los casos automáticamente
+cd "d:\U\Sistemas Distribuidos"
+python run_demo_cases.py
+
+# Ver resultados
+cat demo_results.json | jq
+```
+
+---
+
+## 📊 Kafka UI - Puntos a Mostrar
+
+### URL: http://localhost:8080
+
+**1. Topics Overview:**
+- Mostrar 7 topics
+- Ver mensajes en `questions-pending`
+- Ver mensajes en `validated-responses`
+
+**2. Consumer Groups:**
+- `llm-consumer-group`: 2 consumers, LAG=0
+- `score-validator-group`: 1 consumer, LAG=0
+- `storage-consumer-group`: 1 consumer, LAG=0
+
+**3. Messages View:**
+- Ver contenido de mensajes
+- Filtrar por timestamp
+- Ver key/value de mensajes
+
+---
+
+## 🔍 Verificación de Estado
+
+```powershell
+# Servicios activos
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# LAG de consumers
+docker exec kafka_broker kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group llm-consumer-group
+
+# Cantidad de respuestas
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT COUNT(*) FROM responses;"
+
+# Estado de Redis
+docker exec -it redis redis-cli INFO stats | Select-String "keyspace_hits\|keyspace_misses"
+
+# Logs recientes
+docker logs storage_service --tail 20
+docker logs llm_consumer_1 --tail 20
+docker logs score_validator --tail 20
+```
+
+---
+
+## 📈 Queries PostgreSQL Útiles
+
+```powershell
+# Conectar a PostgreSQL
+docker exec -it postgres_db psql -U user -d yahoo_db
+
+# Dentro de psql:
+
+# Estadísticas generales
+SELECT 
+  COUNT(*) as total,
+  ROUND(AVG(bert_score), 4) as avg_score,
+  ROUND(AVG(processing_attempts), 2) as avg_attempts,
+  ROUND(AVG(total_processing_time_ms), 0) as avg_latency_ms
+FROM responses;
+
+# Distribución por intentos
+SELECT 
+  processing_attempts,
+  COUNT(*) as cantidad,
+  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) as porcentaje
+FROM responses
+GROUP BY processing_attempts
+ORDER BY processing_attempts;
+
+# Top 10 mejores scores
+SELECT question_text, bert_score, processing_attempts
+FROM responses
+ORDER BY bert_score DESC
+LIMIT 10;
+
+# Últimas 10 respuestas procesadas
+SELECT question_text, bert_score, processing_attempts, created_at
+FROM responses
+ORDER BY created_at DESC
+LIMIT 10;
+
+# Preguntas que requirieron más reintentos
+SELECT question_text, processing_attempts, bert_score
+FROM responses
+WHERE processing_attempts >= 3
+ORDER BY processing_attempts DESC, bert_score ASC
+LIMIT 10;
+```
+
+---
+
+## 🛑 Comandos de Control
+
+```powershell
+# Detener todos los servicios
+docker-compose down
+
+# Reiniciar un servicio específico
+docker restart storage_service
+docker restart llm_consumer_1
+docker restart score_validator
+
+# Ver logs de un servicio
+docker logs -f <service_name>
+
+# Limpiar cache Redis (CUIDADO!)
+docker exec -it redis redis-cli FLUSHALL
+
+# Ver uso de recursos
+docker stats
+
+# Reiniciar todo el sistema
+docker-compose down
+docker-compose up -d
+```
+
+---
+
+## 🧪 Tests Rápidos
+
+```powershell
+# Tests de integración
+python test_pipeline.py
+
+# Demo automatizada
+python run_demo_cases.py
+
+# Test manual simple
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{\"question_text\": \"Test\", \"original_answer\": \"Test answer\"}'
+```
+
+---
+
+## 📋 Checklist de Demo
+
+### Antes de Empezar
+- [ ] Todos los servicios UP: `docker ps` muestra 11
+- [ ] LAG=0 en consumers: verificar con comando LAG
+- [ ] Kafka UI accesible: http://localhost:8080
+- [ ] PostgreSQL: 7,887+ respuestas
+- [ ] Demo automatizada ejecutada: `python run_demo_cases.py`
+
+### Durante el Video
+- [ ] Minuto 0-1: Introducción (arquitectura, datos)
+- [ ] Minuto 1-3: CASO 1 - Flujo Normal
+- [ ] Minuto 3-5: CASO 2 - Errores y Retry
+- [ ] Minuto 5-7: CASO 4 - Cache Hit
+- [ ] Minuto 7-9: CASO 5 - Métricas y Kafka UI
+- [ ] Minuto 9-10: Conclusiones (comparación T1 vs T2)
+
+### Después del Video
+- [ ] Guardar video en carpeta del proyecto
+- [ ] Generar reporte técnico
+- [ ] Crear README.md final
+- [ ] Backup de la base de datos
+- [ ] Documentar lecciones aprendidas
+
+---
+
+## 🎥 Tips para Grabación
+
+### Configuración de Pantalla
+1. Resolución: 1920x1080 (Full HD)
+2. Ventanas preparadas:
+   - Terminal PowerShell (comandos)
+   - Navegador con Kafka UI
+   - VSCode con código (opcional)
+   - PostgreSQL client
+
+### Flujo de Grabación
+1. Iniciar con `docker ps` (mostrar sistema activo)
+2. Abrir Kafka UI (mostrar topics)
+3. Ejecutar caso 1 (nueva pregunta)
+4. Mostrar logs en tiempo real
+5. Ver resultado en PostgreSQL
+6. Repetir para otros casos
+7. Terminar con métricas y comparación
+
+### Errores Comunes a Evitar
+- ❌ No verificar servicios antes de empezar
+- ❌ No esperar a que el procesamiento complete
+- ❌ No mostrar los logs relevantes
+- ❌ No mencionar las métricas clave
+- ❌ Olvidar la comparación T1 vs T2
+
+---
+
+## 📞 Ayuda Rápida
+
+### Si algo falla:
+```powershell
+# Reiniciar todo
+docker-compose down
+docker-compose up -d
+
+# Esperar 30 segundos
+Start-Sleep -Seconds 30
+
+# Verificar
+docker ps
+```
+
+### Si un consumer tiene LAG alto:
+```powershell
+# Reiniciar consumer
+docker restart llm_consumer_1 llm_consumer_2 score_validator
+
+# Verificar LAG
+docker exec kafka_broker kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group llm-consumer-group
+```
+
+### Si PostgreSQL no responde:
+```powershell
+# Verificar conexión
+docker exec -it postgres_db psql -U user -d yahoo_db -c "SELECT 1;"
+
+# Si falla, reiniciar
+docker restart postgres_db
+```
+
+---
+
+**✅ TODOS LOS COMANDOS LISTOS PARA DEMO**
+
+**Siguiente paso:** Ejecutar `python run_demo_cases.py` y grabar video siguiendo cronograma de 10 minutos.
