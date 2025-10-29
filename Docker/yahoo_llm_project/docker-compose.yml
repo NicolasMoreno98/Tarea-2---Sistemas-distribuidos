@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Base de datos PostgreSQL (sin cambios)
+  postgres:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_DB: yahoo_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d yahoo_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cache Redis con política LRU
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Servicio LLM modificado para Ollama
+  llm-service:
+    build: ./llm_service
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - OLLAMA_MODEL=tinyllama  # Modelo ultra-rápido para eliminar timeouts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Para acceder a Ollama local
+
+  # Traffic generator (sin cambios en la lógica)
+  traffic-generator:
+    build: ./traffic_generator
+    depends_on:
+      - llm-service
+    volumes:
+      - ./dataset:/data
+    environment:
+      - API_URL=http://llm-service:5000/process
+
+networks:
+  default:
+    name: yahoo_llm_ollama_network

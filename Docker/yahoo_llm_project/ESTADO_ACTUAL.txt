@@ -1,0 +1,130 @@
+ESTADO ACTUAL DEL SISTEMA - TAREA 2
+========================================
+
+FECHA: 28 de octubre de 2025, 18:30 hrs
+
+SERVICIOS CORRIENDO
+-----------------
+✓ Zookeeper - Running (healthy)
+✓ Kafka - Running (healthy)
+✓ PostgreSQL - Running (healthy) - Schema Tarea 2 cargado
+✓ Redis - Running (healthy)
+✓ Storage Service - Running (healthy) - Puerto 5001
+✓ LLM Consumer (2 réplicas) - Running
+✓ Retry Overload Consumer - Stopped (se detuvo para resetear offsets)
+✓ Retry Quota Consumer - Stopped (se detuvo para resetear offsets)
+✓ Score Validator - Stopped (se detuvo para resetear offsets)
+✓ Kafka UI - Running - Puerto 8080
+✓ Ollama - Running externamente - Puerto 11434 con modelo tinyllama
+
+TOPICS DE KAFKA CREADOS
+-----------------------
+✓ questions-pending (3 partitions)
+✓ llm-responses-success (3 partitions)
+✓ llm-responses-error-overload (2 partitions)
+✓ llm-responses-error-quota (2 partitions)
+✓ llm-responses-error-permanent (1 partition)
+✓ validated-responses (3 partitions)
+✓ low-quality-responses (1 partition)
+
+PRUEBAS REALIZADAS
+-----------------
+1. Se envió pregunta "What is the weather like today?" → question_id: 091aca5bb7c0720b
+   - Status: Mensaje enviado a Kafka exitosamente
+   - El mensaje está en el topic questions-pending
+   
+2. Se envió pregunta "Who was Albert Einstein?" → question_id: 09cc1f565c57bbc2
+   - Status: Mensaje enviado a Kafka exitosamente
+   - El mensaje está en el topic questions-pending
+
+PROBLEMA ACTUAL
+--------------
+Los LLM Consumers no están procesando los mensajes del topic questions-pending.
+
+Síntomas:
+- Los mensajes están en el topic (verificado con kafka-console-consumer)
+- Los consumers se conectan correctamente a Kafka
+- Los consumers se asignan las particiones correctamente
+- PERO no están leyendo/procesando los mensajes
+
+Posibles causas investigadas:
+1. ✓ Incompatibilidad de campos: RESUELTO - Se actualizó el código para leer 'question_text' en lugar de 'question'
+2. ✓ Consumer offsets antiguos: SE INTENTÓ RESOLVER - Se reseteó el consumer group a earliest
+3. ? Los consumers no están haciendo poll activamente de Kafka
+
+CORRECCIONES APLICADAS
+----------------------
+1. Actualizado PostgreSQL para usar schema_tarea2.sql en lugar de schema.sql
+2. Actualizado llm_consumer/app.py para leer 'question_text' del mensaje (línea ~107)
+3. Añadido manejo de mensajes None y validación de campos requeridos
+4. Añadido logging extendido con exc_info=True para debugging
+5. Reseteado consumer group llm-consumer-group offsets a earliest
+
+IMAGENES DOCKER CONSTRUIDAS
+---------------------------
+✓ yahoo_llm_project-storage-service
+✓ yahoo_llm_project-llm-consumer (reconstruida 3 veces)
+✓ yahoo_llm_project-retry-overload-consumer
+✓ yahoo_llm_project-retry-quota-consumer
+✓ yahoo_llm_project-score-validator
+
+PROXIMOS PASOS RECOMENDADOS
+---------------------------
+1. Verificar si el problema es el consumer group offset:
+   - Opción A: Crear nuevo consumer group con nombre diferente
+   - Opción B: Borrar completamente el consumer group y recrearlo
+   
+2. Verificar la configuración del KafkaConsumer:
+   - auto_offset_reset='earliest' está configurado
+   - enable_auto_commit=True está configurado
+   - Verificar si hay algún parámetro adicional necesario
+
+3. Probar consumir mensajes manualmente con kafka-console-consumer para verificar formato
+
+4. Si el problema persiste, considerar:
+   - Verificar logs completos del consumer (no solo tail)
+   - Verificar si hay errores de conexión intermitentes
+   - Verificar si el deserializador JSON está funcionando correctamente
+
+DATOS IMPORTANTES
+----------------
+- response.json de Tarea 1 existe con 10,000 respuestas
+- migrate_tarea1_data.py está listo para cargar datos baseline
+- RESUMEN_COMPLETO_TAREA2.txt contiene toda la documentación del sistema
+- Los puertos están correctamente mapeados:
+  * 5001: Storage Service
+  * 8080: Kafka UI
+  * 9092/9093: Kafka
+  * 5432: PostgreSQL
+  * 6379: Redis
+  * 11434: Ollama
+
+COMANDO PARA CONTINUAR DEBUGGING
+--------------------------------
+# Ver todos los logs del consumer (no solo tail):
+docker logs yahoo_llm_project-llm-consumer-1 2>&1 | Select-String "Mensaje recibido|Error|WARNING"
+
+# Verificar offsets del consumer group:
+docker exec kafka_broker kafka-consumer-groups --bootstrap-server localhost:9092 --group llm-consumer-group --describe
+
+# Borrar consumer group y forzar recreación:
+docker exec kafka_broker kafka-consumer-groups --bootstrap-server localhost:9092 --group llm-consumer-group --delete
+
+# Consumir mensajes manualmente para verificar:
+docker exec kafka_broker kafka-console-consumer --bootstrap-server localhost:9092 --topic questions-pending --from-beginning --max-messages 2
+
+ARQUITECTURA COMPLETA DOCUMENTADA EN:
+------------------------------------
+- TAREA_2_ARQUITECTURA.md
+- README_TAREA2.md
+- INSTRUCCIONES_EJECUCION.md
+- ESTRATEGIA_DEMO.md
+- RESUMEN_COMPLETO_TAREA2.txt (800+ líneas, completo)
+
+TIEMPO INVERTIDO HASTA AHORA
+----------------------------
+- Diseño arquitectura: 1 hora
+- Implementación servicios: 2.5 horas
+- Docker setup: 1 hora
+- Debugging actual: 1 hora
+TOTAL: ~5.5 horas

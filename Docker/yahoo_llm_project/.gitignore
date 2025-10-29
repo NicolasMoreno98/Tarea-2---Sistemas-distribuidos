@@ -1,0 +1,43 @@
+# Archivos de configuración sensible (comentado para repo privado)
+# key.env
+.env
+
+# Archivos de resultados
+dataset/response.json
+dataset/train.csv
+*.json
+*.log
+
+# Archivos temporales de Docker
+.docker/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+
+# Archivos de Node.js (si se usan)
+node_modules/
+npm-debug.log*
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
