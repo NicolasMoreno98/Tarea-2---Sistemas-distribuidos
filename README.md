@@ -102,6 +102,7 @@ docker-compose up -d
 
 ## Autor
 
+Fernanda Valencia
 Nicolas Moreno
 Sistemas Distribuidos - Tarea 2
 
